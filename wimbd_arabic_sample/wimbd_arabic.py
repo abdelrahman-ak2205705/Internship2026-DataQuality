@@ -52,11 +52,8 @@ from datasketch import MinHash, MinHashLSH
 from plotly.subplots import make_subplots
 
 # -------------------------------------------------------------------- config
-INPUT_PATH = Path(
-    "/mnt/d/E/LLM/____CODES____/Omar/CC_Samples/samples_100k/state_output_sample1000.jsonl"
-)
-OUT_DIR = Path("/mnt/d/Python/wimbd_arabic")
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+INPUT_PATH = Path("state_output_sample1000.jsonl")
+OUT_DIR    = Path(".")
 
 TOP_K = 30
 NGRAM_TOP_K = 25
@@ -75,14 +72,11 @@ _TA_MARBUTA = regex.compile(r"ة")
 _ARABIC_LETTER = regex.compile(r"\p{Arabic}")
 _WORD_RE = regex.compile(r"[\p{Arabic}A-Za-z0-9]+")
 
-ARABIC_STOPWORDS = set("""
-في من إلى على عن مع هذا هذه ذلك تلك التي الذي الذين هؤلاء أن إن كان كانت
-يكون تكون قد لقد ما لا لم لن لن إذا إذ كل كلها كله بعض غير حيث حين بين فوق
-تحت بعد قبل عند لدى لدي هو هي هم هن أنا أنت نحن أنتم أنتن هما أو أم ثم بل
-حتى لكن أيضا أيضًا إنما إذن آخر أخرى الآن هنا هناك مثل بسبب لكي كي لذلك
-هكذا هل ليس ليست ليسوا قال قالت قالوا يقول تقول كما به بها بهم له لها لهم
-عليه عليها عليهم منه منها منهم فيه فيها فيهم وهو وهي وهم
-""".split())
+try:
+    import arabicstopwords.arabicstopwords as _ar_sw
+    ARABIC_STOPWORDS: set[str] = set(_ar_sw.stopwords_list())
+except ImportError:
+    raise ImportError("Run: pip install Arabic-Stopwords")
 
 OFFENSIVE_WORDS = set("""
 كلب حمار خنزير وسخ قذر تافه احمق غبي بليد لعنه لعنة جحيم قبيح كافر زنا
