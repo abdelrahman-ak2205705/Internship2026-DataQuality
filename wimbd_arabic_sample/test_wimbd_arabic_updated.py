@@ -23,13 +23,7 @@ Ground truth (measured on this corpus):
   self_contam_repeated : 70,778
 
 Run all tests:
-    pytest test_wimbd_arabic.py -v -W ignore::DeprecationWarning
-
-Run one group:
-    pytest test_wimbd_arabic.py -v -k "pii" -W ignore::DeprecationWarning
-
-Show timing + scaling estimate:
-    pytest test_wimbd_arabic.py -v --durations=10 -W ignore::DeprecationWarning
+    pytest test_wimbd_arabic.py -v -s -W ignore::DeprecationWarning
 """
 from __future__ import annotations
 
@@ -40,7 +34,7 @@ import sys
 import time
 import unittest.mock as mock
 from pathlib import Path
-import tracemalloc
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -76,31 +70,54 @@ class TestNormalizeArabic:
 
     def test_removes_tashkeel(self):
         for mark in ["ُ", "َ", "ِ", "ً", "ٌ", "ٍ", "ّ"]:
-            assert mark not in W.normalize_ar(f"ك{mark}تاب")
+            text, result = f"ك{mark}تاب", W.normalize_ar(f"ك{mark}تاب")
+            print(f"\n  IN: {text!r}  →  OUT: {result!r}")
+            assert mark not in result
 
     def test_unifies_alef_hamza_above(self):
-        assert W.normalize_ar("أحمد") == W.normalize_ar("احمد")
+        a, b = "أحمد", "احمد"
+        print(f"\n  IN: {a!r}  →  OUT: {W.normalize_ar(a)!r}")
+        print(f"  IN: {b!r}  →  OUT: {W.normalize_ar(b)!r}")
+        assert W.normalize_ar(a) == W.normalize_ar(b)
 
     def test_unifies_alef_hamza_below(self):
-        assert W.normalize_ar("إسلام") == W.normalize_ar("اسلام")
+        a, b = "إسلام", "اسلام"
+        print(f"\n  IN: {a!r}  →  OUT: {W.normalize_ar(a)!r}")
+        print(f"  IN: {b!r}  →  OUT: {W.normalize_ar(b)!r}")
+        assert W.normalize_ar(a) == W.normalize_ar(b)
 
     def test_unifies_alef_madda(self):
-        assert W.normalize_ar("آمين") == W.normalize_ar("امين")
+        a, b = "آمين", "امين"
+        print(f"\n  IN: {a!r}  →  OUT: {W.normalize_ar(a)!r}")
+        print(f"  IN: {b!r}  →  OUT: {W.normalize_ar(b)!r}")
+        assert W.normalize_ar(a) == W.normalize_ar(b)
 
     def test_unifies_alef_maqsura(self):
-        assert W.normalize_ar("مبنى") == W.normalize_ar("مبني")
+        a, b = "مبنى", "مبني"
+        print(f"\n  IN: {a!r}  →  OUT: {W.normalize_ar(a)!r}")
+        print(f"  IN: {b!r}  →  OUT: {W.normalize_ar(b)!r}")
+        assert W.normalize_ar(a) == W.normalize_ar(b)
 
     def test_unifies_ta_marbuta(self):
-        assert W.normalize_ar("مدرسة") == W.normalize_ar("مدرسه")
+        a, b = "مدرسة", "مدرسه"
+        print(f"\n  IN: {a!r}  →  OUT: {W.normalize_ar(a)!r}")
+        print(f"  IN: {b!r}  →  OUT: {W.normalize_ar(b)!r}")
+        assert W.normalize_ar(a) == W.normalize_ar(b)
 
     def test_removes_tatweel(self):
-        assert "ـ" not in W.normalize_ar("جمـيل")
+        text, result = "جمـيل", W.normalize_ar("جمـيل")
+        print(f"\n  IN: {text!r}  →  OUT: {result!r}")
+        assert "ـ" not in result
 
     def test_empty_string(self):
-        assert W.normalize_ar("") == ""
+        result = W.normalize_ar("")
+        print(f"\n  IN: ''  →  OUT: {result!r}")
+        assert result == ""
 
     def test_latin_chars_unaffected(self):
-        assert "Python" in W.normalize_ar("Python 3.12")
+        text, result = "Python 3.12", W.normalize_ar("Python 3.12")
+        print(f"\n  IN: {text!r}  →  OUT: {result!r}")
+        assert "Python" in result
 
 
 # ===========================================================================
@@ -110,26 +127,36 @@ class TestNormalizeArabic:
 class TestTokenize:
 
     def test_arabic_words(self):
-        tokens = W.tokenize("الذكاء الاصطناعي")
+        text, tokens = "الذكاء الاصطناعي", W.tokenize("الذكاء الاصطناعي")
+        print(f"\n  IN: {text!r}  →  OUT: {tokens}")
         assert "الذكاء" in tokens and "الاصطناعي" in tokens
 
     def test_mixed_arabic_latin(self):
-        tokens = W.tokenize("تعلم Python بسهولة")
+        text, tokens = "تعلم Python بسهولة", W.tokenize("تعلم Python بسهولة")
+        print(f"\n  IN: {text!r}  →  OUT: {tokens}")
         assert "Python" in tokens and "تعلم" in tokens
 
     def test_numbers_included(self):
-        assert "2017" in W.tokenize("عام 2017")
+        text, tokens = "عام 2017", W.tokenize("عام 2017")
+        print(f"\n  IN: {text!r}  →  OUT: {tokens}")
+        assert "2017" in tokens
 
     def test_punctuation_excluded(self):
-        tokens = W.tokenize("مرحبا، كيف حالك؟")
+        text, tokens = "مرحبا، كيف حالك؟", W.tokenize("مرحبا، كيف حالك؟")
+        print(f"\n  IN: {text!r}  →  OUT: {tokens}")
         assert "،" not in tokens and "؟" not in tokens
 
     def test_empty_string(self):
-        assert W.tokenize("") == []
+        result = W.tokenize("")
+        print(f"\n  IN: ''  →  OUT: {result}")
+        assert result == []
 
     def test_real_doc_tokenizes_to_nonzero(self, records):
         text = records[0]["record"].get("text", "")
-        assert len(W.tokenize(text)) > 0
+        tokens = W.tokenize(text)
+        print(f"\n  first doc preview: {text[:60]!r}")
+        print(f"  token count: {len(tokens)}, first 5: {tokens[:5]}")
+        assert len(tokens) > 0
 
 
 # ===========================================================================
@@ -176,20 +203,35 @@ class TestFingerprint:
 
     def test_deterministic(self):
         t = "الذكاء الاصطناعي"
-        assert W.fingerprint(t) == W.fingerprint(t)
+        r1, r2 = W.fingerprint(t), W.fingerprint(t)
+        print(f"\n  IN: {t!r}  →  OUT: {r1!r}  (called twice, same result: {r1 == r2})")
+        assert r1 == r2
 
     def test_different_texts_differ(self):
-        assert W.fingerprint("نص أول") != W.fingerprint("نص ثانٍ")
+        a, b = "نص أول", "نص ثانٍ"
+        fa, fb = W.fingerprint(a), W.fingerprint(b)
+        print(f"\n  IN: {a!r}  →  OUT: {fa!r}")
+        print(f"  IN: {b!r}  →  OUT: {fb!r}")
+        assert fa != fb
 
     def test_returns_32_char_hex(self):
-        assert re.fullmatch(r"[0-9a-f]{32}", W.fingerprint("test"))
+        text, result = "test", W.fingerprint("test")
+        print(f"\n  IN: {text!r}  →  OUT: {result!r}  (len={len(result)})")
+        assert re.fullmatch(r"[0-9a-f]{32}", result)
 
     def test_matches_hashlib_md5(self):
         text = "مرحبا"
-        assert W.fingerprint(text) == hashlib.md5(text.encode("utf-8")).hexdigest()
+        result = W.fingerprint(text)
+        expected = hashlib.md5(text.encode("utf-8")).hexdigest()
+        print(f"\n  IN: {text!r}  →  fingerprint: {result!r}  ==  hashlib.md5: {expected!r}")
+        assert result == expected
 
     def test_whitespace_sensitive(self):
-        assert W.fingerprint("a b") != W.fingerprint("a  b")
+        a, b = "a b", "a  b"
+        fa, fb = W.fingerprint(a), W.fingerprint(b)
+        print(f"\n  IN: {a!r}  →  OUT: {fa!r}")
+        print(f"  IN: {b!r}  →  OUT: {fb!r}")
+        assert fa != fb
 
 
 # ===========================================================================
@@ -202,40 +244,65 @@ class TestPIIPatterns:
         return W.PII_PATTERNS[kind].findall(text)
 
     def test_email_basic(self):
-        assert self._find("email", "user@example.com")
+        text, matches = "user@example.com", self._find("email", "user@example.com")
+        print(f"\n  IN: {text!r}  →  email matches: {matches}")
+        assert matches
 
     def test_email_real_corpus_example(self):
-        assert self._find("email", "ahmed_club2000@yahoo.com")
+        text, matches = "ahmed_club2000@yahoo.com", self._find("email", "ahmed_club2000@yahoo.com")
+        print(f"\n  IN: {text!r}  →  email matches: {matches}")
+        assert matches
 
     def test_email_in_arabic_sentence(self):
-        assert self._find("email", "راسلنا على info@kds.ae اليوم")
+        text, matches = "راسلنا على info@kds.ae اليوم", self._find("email", "راسلنا على info@kds.ae اليوم")
+        print(f"\n  IN: {text!r}  →  email matches: {matches}")
+        assert matches
 
     def test_email_no_match_incomplete(self):
+        for text in ["user@", "@example.com"]:
+            matches = self._find("email", text)
+            print(f"\n  IN: {text!r}  →  email matches: {matches}  (expected none)")
         assert not self._find("email", "user@") and not self._find("email", "@example.com")
 
     def test_ipv4_standard(self):
-        assert self._find("ipv4", "192.168.1.1")
+        text, matches = "192.168.1.1", self._find("ipv4", "192.168.1.1")
+        print(f"\n  IN: {text!r}  →  ipv4 matches: {matches}")
+        assert matches
 
     def test_ipv4_real_corpus_example(self):
-        assert self._find("ipv4", "217.218.48.21")
+        text, matches = "217.218.48.21", self._find("ipv4", "217.218.48.21")
+        print(f"\n  IN: {text!r}  →  ipv4 matches: {matches}")
+        assert matches
 
     def test_ipv4_no_match_three_octets(self):
-        assert not self._find("ipv4", "192.168.1")
+        text, matches = "192.168.1", self._find("ipv4", "192.168.1")
+        print(f"\n  IN: {text!r}  →  ipv4 matches: {matches}  (expected none)")
+        assert not matches
 
     def test_url_https(self):
-        assert self._find("url", "https://example.com/path")
+        text, matches = "https://example.com/path", self._find("url", "https://example.com/path")
+        print(f"\n  IN: {text!r}  →  url matches: {matches}")
+        assert matches
 
     def test_url_no_match_without_scheme(self):
-        assert not self._find("url", "example.com/page")
+        text, matches = "example.com/page", self._find("url", "example.com/page")
+        print(f"\n  IN: {text!r}  →  url matches: {matches}  (expected none)")
+        assert not matches
 
     def test_phone_international(self):
-        assert self._find("phone", "+966-555-1234")
+        text, matches = "+966-555-1234", self._find("phone", "+966-555-1234")
+        print(f"\n  IN: {text!r}  →  phone matches: {matches}")
+        assert matches
 
     def test_phone_local(self):
-        assert self._find("phone", "0501234567")
+        text, matches = "0501234567", self._find("phone", "0501234567")
+        print(f"\n  IN: {text!r}  →  phone matches: {matches}")
+        assert matches
 
     def test_phone_arabic_indic_digits(self):
-        assert self._find("phone", "٠٥٠١٢٣٤٥٦٧")
+        text, matches = "٠٥٠١٢٣٤٥٦٧", self._find("phone", "٠٥٠١٢٣٤٥٦٧")
+        print(f"\n  IN: {text!r}  →  phone matches: {matches}")
+        assert matches
 
 
 class TestPIIFromRealCorpus:
@@ -277,28 +344,42 @@ class TestOffensiveDetection:
         return n_docs, hits
 
     def test_known_word_detected(self):
-        n, _ = self._run(["هذا الرجل مثل كلب"])
+        text = "هذا الرجل مثل كلب"
+        n, hits = self._run([text])
+        print(f"\n  IN: {text!r}  →  hits: {dict(hits)}, docs: {n}")
         assert n == 1
 
     def test_clean_text_zero_hits(self):
-        n, _ = self._run(["الذكاء الاصطناعي مفيد للغاية"])
+        text = "الذكاء الاصطناعي مفيد للغاية"
+        n, hits = self._run([text])
+        print(f"\n  IN: {text!r}  →  hits: {dict(hits)}, docs: {n}")
         assert n == 0
 
     def test_normalization_applied_before_match(self):
-        # diacritics on an offensive word must still match
-        n, _ = self._run(["هذا كَلْبٌ"])
+        text = "هذا كَلْبٌ"
+        n, hits = self._run([text])
+        print(f"\n  IN: {text!r}  →  hits: {dict(hits)}, docs: {n}")
         assert n == 1
 
     def test_space_separated_multiple_words(self):
-        n, terms = self._run(["كلب حمار"])
+        text = "كلب حمار"
+        n, terms = self._run([text])
+        print(f"\n  IN: {text!r}  →  hits: {dict(terms)}, docs: {n}")
         assert n == 1 and len(terms) >= 2
 
     def test_waw_prefix_not_matched(self):
-        n, _ = self._run(["وكلب"])
+        # "وكلب" is one token — documented gap vs WIMBD paper
+        text = "وكلب"
+        n, hits = self._run([text])
+        print(f"\n  IN: {text!r}  →  hits: {dict(hits)}, docs: {n}  (waw prefix not split)")
         assert n == 0
 
     def test_real_corpus_offensive_docs(self, analysis):
-        assert analysis["offensive"]["n_docs_with_offensive"] == 30
+        n = analysis["offensive"]["n_docs_with_offensive"]
+        top = analysis["offensive"]["top_terms"][:5]
+        print(f"\n  offensive docs in corpus: {n}")
+        print(f"  top terms: {top}")
+        assert n == 30
 
 
 # ===========================================================================
@@ -308,10 +389,16 @@ class TestOffensiveDetection:
 class TestExactDuplicates:
 
     def test_three_dup_groups(self, analysis):
-        assert analysis["exact_duplicates"]["n_dup_groups"] == 3
+        n = analysis["exact_duplicates"]["n_dup_groups"]
+        print(f"\n  exact duplicate groups found: {n}")
+        for g in analysis["exact_duplicates"]["top_groups"]:
+            print(f"    count={g['count']}  url={g['url']}  preview={g['preview'][:60]!r}")
+        assert n == 3
 
     def test_ten_docs_in_dup_groups(self, analysis):
-        assert analysis["exact_duplicates"]["n_dup_docs"] == 10
+        n = analysis["exact_duplicates"]["n_dup_docs"]
+        print(f"\n  total docs involved in exact duplicates: {n}")
+        assert n == 10
 
     def test_all_top_groups_count_gt_1(self, analysis):
         for g in analysis["exact_duplicates"]["top_groups"]:
@@ -330,10 +417,16 @@ class TestExactDuplicates:
             for i in range(5)
         ]
         result = W.analyze(recs)
-        assert result["exact_duplicates"]["n_dup_groups"] == 0
+        n = result["exact_duplicates"]["n_dup_groups"]
+        print(f"\n  clean corpus (5 unique docs)  →  dup groups: {n}")
+        assert n == 0
 
     def test_fingerprint_differs_for_near_dups(self):
-        assert W.fingerprint("نص أ") != W.fingerprint("نص ب")
+        a, b = "نص أ", "نص ب"
+        fa, fb = W.fingerprint(a), W.fingerprint(b)
+        print(f"\n  IN: {a!r}  →  {fa!r}")
+        print(f"  IN: {b!r}  →  {fb!r}  (different ✓)")
+        assert fa != fb
 
 
 # ===========================================================================
@@ -343,14 +436,26 @@ class TestExactDuplicates:
 class TestNearDuplicates:
 
     def test_pair_count(self, analysis):
-        assert analysis["near_duplicates"]["n_pairs"] == 109
+        n = analysis["near_duplicates"]["n_pairs"]
+        print(f"\n  near-duplicate pairs found: {n}  (threshold={analysis['near_duplicates']['threshold']})")
+        for p in analysis["near_duplicates"]["example_pairs"][:3]:
+            print(f"    A: {p['a_url']}")
+            print(f"    B: {p['b_url']}")
+            print(f"    A preview: {p['a_preview'][:60]!r}")
+            print(f"    B preview: {p['b_preview'][:60]!r}")
+            print()
+        assert n == 109
 
     def test_cluster_count(self, analysis):
-        assert analysis["near_duplicates"]["n_clusters"] == 47
+        n = analysis["near_duplicates"]["n_clusters"]
+        print(f"\n  near-duplicate clusters: {n}")
+        assert n == 47
 
     def test_threshold_and_perms(self, analysis):
-        assert analysis["near_duplicates"]["threshold"] == 0.8
-        assert analysis["near_duplicates"]["num_perm"] == 128
+        t = analysis["near_duplicates"]["threshold"]
+        p = analysis["near_duplicates"]["num_perm"]
+        print(f"\n  MinHash threshold={t}, num_perm={p}")
+        assert t == 0.8 and p == 128
 
     def test_short_docs_not_indexed(self):
         recs = [
@@ -360,7 +465,10 @@ class TestNearDuplicates:
              "status": "PASSED"}
             for i in range(3)
         ]
-        assert W.analyze(recs)["near_duplicates"]["n_pairs"] == 0
+        result = W.analyze(recs)
+        n = result["near_duplicates"]["n_pairs"]
+        print(f"\n  3 single-token docs  →  near-dup pairs: {n}  (short docs skipped ✓)")
+        assert n == 0
 
     def test_identical_long_docs_pair(self):
         long = "الذكاء الاصطناعي يعتمد على التعلم الآلي " * 10
@@ -371,7 +479,10 @@ class TestNearDuplicates:
              "status": "PASSED"}
             for i in range(2)
         ]
-        assert W.analyze(recs)["near_duplicates"]["n_pairs"] >= 1
+        result = W.analyze(recs)
+        n = result["near_duplicates"]["n_pairs"]
+        print(f"\n  2 identical long docs  →  near-dup pairs: {n}  (detected ✓)")
+        assert n >= 1
 
     def test_unrelated_docs_no_pair(self):
         recs = [
@@ -386,7 +497,10 @@ class TestNearDuplicates:
                         "content_type": None, "langdetect": None},
              "status": "PASSED"},
         ]
-        assert W.analyze(recs)["near_duplicates"]["n_pairs"] == 0
+        result = W.analyze(recs)
+        n = result["near_duplicates"]["n_pairs"]
+        print(f"\n  2 unrelated docs (AI vs football)  →  near-dup pairs: {n}  (correctly 0 ✓)")
+        assert n == 0
 
 
 # ===========================================================================
@@ -396,7 +510,11 @@ class TestNearDuplicates:
 class TestNgramAnalysis:
 
     def test_unigrams_populated(self, analysis):
-        assert len(analysis["top_unigrams"]) > 0
+        top = analysis["top_unigrams"][:10]
+        print(f"\n  top unigrams (stopwords removed):")
+        for word, count in top:
+            print(f"    {word}: {count}")
+        assert len(top) > 0
 
     def test_unigrams_are_word_int_tuples(self, analysis):
         for word, count in analysis["top_unigrams"]:
@@ -407,15 +525,23 @@ class TestNgramAnalysis:
             assert word not in W.ARABIC_STOPWORDS
 
     def test_bigrams_are_two_tokens(self, analysis):
-        for bigram, _ in analysis["top_bigrams"]:
+        top = analysis["top_bigrams"][:5]
+        print(f"\n  top bigrams:")
+        for bigram, count in top:
+            print(f"    {bigram!r}: {count}")
             assert len(bigram.split(" ")) == 2
 
     def test_trigrams_are_three_tokens(self, analysis):
-        for trigram, _ in analysis["top_trigrams"]:
+        top = analysis["top_trigrams"][:5]
+        print(f"\n  top trigrams:")
+        for trigram, count in top:
+            print(f"    {trigram!r}: {count}")
             assert len(trigram.split(" ")) == 3
 
     def test_vocab_size(self, analysis):
-        assert analysis["vocab"]["n_types"] == 102115
+        n = analysis["vocab"]["n_types"]
+        print(f"\n  vocabulary size (unique tokens after normalization + stopword removal): {n:,}")
+        assert n == 102115
 
     def test_normalization_merges_alef_variants(self):
         recs = [
@@ -426,7 +552,9 @@ class TestNgramAnalysis:
             for i, t in enumerate(["أحمد يدرس الهندسة", "احمد يدرس الهندسة"])
         ]
         unigrams = dict(W.analyze(recs)["top_unigrams"])
-        assert unigrams.get("احمد", 0) == 2
+        count = unigrams.get("احمد", 0)
+        print(f"\n  'أحمد' and 'احمد' both normalize to 'احمد'  →  count: {count}")
+        assert count == 2
 
 
 # ===========================================================================
@@ -602,10 +730,19 @@ class TestDistStats:
 class TestSelfContamination:
 
     def test_repeated_ngram_count(self, analysis):
-        assert analysis["self_contamination"]["n_repeated_long_ngrams"] == 70778
+        n = analysis["self_contamination"]["n_repeated_long_ngrams"]
+        print(f"\n  repeated 50-grams found in corpus: {n:,}")
+        for ex in analysis["self_contamination"]["examples"][:2]:
+            print(f"    doc A: {ex['doc_a_url']}")
+            print(f"    doc B: {ex['doc_b_url']}")
+            print(f"    repeated span: {ex['gram_preview'][:80]!r}")
+            print()
+        assert n == 70778
 
     def test_ngram_size_is_50(self, analysis):
-        assert analysis["self_contamination"]["ngram_size"] == 50
+        n = analysis["self_contamination"]["ngram_size"]
+        print(f"\n  contamination n-gram size: {n}")
+        assert n == 50
 
     def test_examples_have_required_keys(self, analysis):
         for ex in analysis["self_contamination"]["examples"]:
@@ -619,7 +756,10 @@ class TestSelfContamination:
              "status": "PASSED"}
             for i in range(5)
         ]
-        assert W.analyze(recs)["self_contamination"]["n_repeated_long_ngrams"] == 0
+        result = W.analyze(recs)
+        n = result["self_contamination"]["n_repeated_long_ngrams"]
+        print(f"\n  5 short unique docs  →  repeated 50-grams: {n}  (none expected ✓)")
+        assert n == 0
 
     def test_contamination_detected_with_shared_long_span(self):
         span = " ".join([f"كلمة{i}" for i in range(60)])
@@ -631,7 +771,10 @@ class TestSelfContamination:
              "status": "PASSED"}
             for i in range(2)
         ]
-        assert W.analyze(recs)["self_contamination"]["n_repeated_long_ngrams"] >= 1
+        result = W.analyze(recs)
+        n = result["self_contamination"]["n_repeated_long_ngrams"]
+        print(f"\n  2 docs sharing a 60-word span  →  repeated 50-grams: {n}  (detected ✓)")
+        assert n >= 1
 
 
 # ===========================================================================
@@ -665,8 +808,6 @@ class TestFullPipeline:
 # 15. Performance & 100K scaling estimate
 # ===========================================================================
 
-import tracemalloc
-import time
 class TestPerformanceEstimation:
 
     def test_stream_records_under_5s(self):
@@ -674,63 +815,44 @@ class TestPerformanceEstimation:
         recs = list(W.stream_records(CORPUS))
         elapsed = time.perf_counter() - t0
         print(f"\n[PERF] stream_records(1000 docs): {elapsed:.3f}s")
-        assert elapsed < 5.0
-        assert len(recs) == 1000
+        assert elapsed < 5.0 and len(recs) == 1000
 
     def test_analyze_runtime_and_memory(self, records):
+        import tracemalloc
         tracemalloc.start()
         t0 = time.perf_counter()
         result = W.analyze(records)
         elapsed = time.perf_counter() - t0
-        current, peak = tracemalloc.get_traced_memory()
+        _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
+
         peak_mb = peak / (1024 * 1024)
+        scale = 100
+        proj_s = elapsed * scale
+        avg_bytes = sum(
+            len((r["record"].get("text") or "").encode("utf-8"))
+            for r in records
+        ) / len(records)
+        raw_text_gb = (avg_bytes * 100_000) / (1024 ** 3)
+        proj_mem_gb = (peak_mb * scale) / 1024
+
         print(f"\n[PERF] analyze(1000 docs): {elapsed:.2f}s")
         print(f"[PERF] Peak memory: {peak_mb:.2f} MB")
-        assert result["totals"]["n_documents"] == 1000
-
-    def test_project_to_100k(self, records):
-        tracemalloc.start()
-        t0 = time.perf_counter()
-        W.analyze(records)
-        elapsed = time.perf_counter() - t0
-        current, peak = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-        scale = 100  # 1K -> 100K
-        projected_runtime_sec = elapsed * scale
-        projected_runtime_min = projected_runtime_sec / 60
-        peak_mb = peak / (1024 * 1024)
-        projected_memory_gb = (peak_mb * scale) / 1024
-        avg_doc_bytes = (
-            sum(
-                len((r["record"].get("text") or "").encode("utf-8"))
-                for r in records
-            )
-            / len(records)
-        )
-        raw_text_gb = (
-            avg_doc_bytes * 100_000
-        ) / (1024 ** 3)
         print("\n" + "=" * 60)
         print("SCALING ESTIMATE (100K RECORDS)")
         print("=" * 60)
-        print(f"Runtime on 1K docs       : {elapsed:.2f} sec")
-        print(
-            f"Projected runtime 100K  : "
-            f"{projected_runtime_sec:.1f} sec "
-            f"({projected_runtime_min:.1f} min)"
-        )
+        print(f"Runtime on 1K docs      : {elapsed:.2f} sec")
+        print(f"Projected runtime 100K  : {proj_s:.1f} sec ({proj_s/60:.1f} min)")
         print(f"Peak memory on 1K docs  : {peak_mb:.1f} MB")
-        print(
-            f"Projected memory 100K   : "
-            f"{projected_memory_gb:.1f} GB "
-            f"(rough linear estimate)"
-        )
-        print(f"Average document size   : {avg_doc_bytes:.0f} bytes")
+        print(f"Projected memory 100K   : {proj_mem_gb:.1f} GB (rough linear estimate)")
+        print(f"Average document size   : {avg_bytes:.0f} bytes")
         print(f"Raw text size @100K     : {raw_text_gb:.1f} GB")
         print("\nNotes:")
         print("- Runtime estimate assumes near-linear scaling.")
         print("- MinHash and self-contamination may scale differently.")
         print("- Actual machine requirements should include safety margin.")
         print("=" * 60)
-        assert projected_runtime_sec > 0
+
+        assert result["totals"]["n_documents"] == 1000
+        assert elapsed < 300.0
+        assert proj_s > 0
