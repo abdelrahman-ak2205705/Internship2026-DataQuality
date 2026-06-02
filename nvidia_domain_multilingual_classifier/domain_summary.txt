@@ -1,0 +1,41 @@
+============================================================
+DOMAIN DISTRIBUTION — nvidia/multilingual-domain-classifier
+Documents classified : 20
+Average confidence   : 0.846
+============================================================
+  News                             4  ( 20.0%)  ██████████
+  Arts_and_Entertainment           4  ( 20.0%)  ██████████
+  Food_and_Drink                   2  ( 10.0%)  █████
+  People_and_Society               2  ( 10.0%)  █████
+  Jobs_and_Education               2  ( 10.0%)  █████
+  Internet_and_Telecom             1  (  5.0%)  ██
+  Online_Communities               1  (  5.0%)  ██
+  Games                            1  (  5.0%)  ██
+  Science                          1  (  5.0%)  ██
+  Home_and_Garden                  1  (  5.0%)  ██
+  Hobbies_and_Leisure              1  (  5.0%)  ██
+============================================================
+
+Per-document predictions:
+  URL                                                     Domain                         Conf
+  -----------------------------------------------------------------------------------------------
+  http://2ahwasada.blogspot.com/2012/03/blog-post_6008.ht Food_and_Drink                 0.931
+  http://alestat.com/www,nedayeenghelab.com.html          Internet_and_Telecom           0.998
+  http://alghad.com/articles/1772612-%D8%A7%D9%84%D9%82%D News                           1.000
+  http://all-in-one.own0.com/t1071-topic                  Online_Communities             0.465
+  http://allabouche.ahlamontada.com/f19-montada           Games                          0.996
+  http://almohandes.org/t/satellite-proposed-to-send-sola Science                        0.964
+  http://almohdar.own0.com/u6                             Home_and_Garden                0.427
+  http://almraah.net/f16-48/                              Arts_and_Entertainment         0.489
+  http://almuada.mam9.com/t615-topic                      Arts_and_Entertainment         1.000
+  http://alsaherlove.blogspot.com/2013/11/blog-post_4.htm Hobbies_and_Leisure            0.505
+  http://amrmahran.com/%D8%A7%D9%84%D8%A8%D8%B1%D8%A7%D9% People_and_Society             1.000
+  http://amshehri.com/                                    People_and_Society             1.000
+  http://ar.sweetsmachinery.com/Cape-Verde-no40/%D8%A7%D9 Food_and_Drink                 0.979
+  http://arabheroes.montadarabi.com/t1196-topic           Arts_and_Entertainment         1.000
+  http://arabwikileaks.alafdal.net/t440-topic             News                           0.696
+  http://arabwikileaks.alafdal.net/t693-topic             News                           0.753
+  http://aria0chan.blogspot.com/2016/12/kamisama-hajimema Arts_and_Entertainment         0.983
+  http://badil.info/tag/%D8%B1%D9%8A%D8%A7%D8%AD/         News                           0.996
+  http://berber.ahlamontada.com/t12411-topic              Jobs_and_Education             0.864
+  http://berber.ahlamontada.com/t12664-topic              Jobs_and_Education             0.882
