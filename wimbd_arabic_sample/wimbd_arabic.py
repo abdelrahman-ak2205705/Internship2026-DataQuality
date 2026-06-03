@@ -195,10 +195,16 @@ def analyze(records: list[dict]) -> dict[str, Any]:
     # ---- §3.2 URL / domain analysis -------------------------------------
     tld_counter, domain_counter, suffix_counter = (
         collections.Counter(), collections.Counter(), collections.Counter())
-    for u in urls:
+    for i, u in enumerate(urls):
         if not u:
+            docs[i]["domain"] = None
+            docs[i]["tld"] = None
+            docs[i]["suffix"] = None
             continue
         ext = tldextract.extract(u)
+        docs[i]["domain"] = ext.registered_domain or None
+        docs[i]["tld"] = ext.suffix.split(".")[-1] if ext.suffix else None
+        docs[i]["suffix"] = ext.suffix or None
         if ext.registered_domain:
             domain_counter[ext.registered_domain] += 1
         if ext.suffix:
@@ -377,11 +383,15 @@ def analyze(records: list[dict]) -> dict[str, Any]:
     # ---- packaged docs list (kept short; full text dropped) -------------
     res["_doc_summaries"] = [{
         "url": d["url"],
+        "domain": d.get("domain"),
+        "tld": d.get("tld"),
+        "suffix": d.get("suffix"),
         "lang": d["lang"],
         "lang_score": d["lang_score"],
         "n_tokens": d["n_tokens"],
         "n_chars": d["n_chars"],
         "timestamp": d["timestamp"],
+        "preview": (d["text"] or "")[:800],
     } for d in docs]
 
     return res
@@ -470,6 +480,271 @@ def fig_timeline(by_period: dict[str, int], title: str) -> go.Figure:
         marker_color=ACCENT))
     fig.update_layout(**_layout(title))
     return fig
+
+
+# Panels that get download buttons, mapped to their export key (used by JS).
+EXPORT_PANELS = {
+    "Top domains": "domains",
+    "Top TLDs": "tlds",
+    "Top URL suffixes": "suffixes",
+    "Duplicate URLs": "dupes",
+}
+
+# Charts that get a stable div id so JS can attach click handlers (drill-down).
+CHART_IDS = {
+    "Top domains": "chart_domains",
+    "Top TLDs": "chart_tlds",
+}
+
+
+# Client-side behavior: download helpers + Save-button wiring.
+# Kept as a plain (non-f) string so its JS braces need no escaping.
+DASHBOARD_JS = r"""
+(function () {
+  function groupBy(docs, field) {
+    const counts = {};
+    for (const d of docs) {
+      const k = d[field];
+      if (!k) continue;
+      counts[k] = (counts[k] || 0) + 1;
+    }
+    return Object.entries(counts).sort(function (a, b) { return b[1] - a[1]; });
+  }
+
+  function csvCell(v) {
+    const s = (v === null || v === undefined) ? "" : String(v);
+    if (/[",\r\n]/.test(s)) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function downloadCSV(filename, rows) {
+    const text = rows.map(function (r) { return r.map(csvCell).join(","); }).join("\r\n");
+    triggerDownload(new Blob([String.fromCharCode(0xFEFF) + text], { type: "text/csv;charset=utf-8;" }), filename);
+  }
+
+  function downloadJSON(filename, obj) {
+    triggerDownload(new Blob([JSON.stringify(obj, null, 2)], { type: "application/json;charset=utf-8;" }), filename);
+  }
+
+  const EXPORTS = {
+    domains:  { field: "domain", header: ["domain", "count"],  file: "top_domains" },
+    tlds:     { field: "tld",    header: ["tld", "count"],      file: "top_tlds" },
+    suffixes: { field: "suffix", header: ["suffix", "count"],   file: "top_suffixes" },
+    dupes:    { field: "url",    header: ["url", "count"],      file: "duplicate_urls", minCount: 2 }
+  };
+
+  function handleExport(key, fmt) {
+    const cfg = EXPORTS[key];
+    if (!cfg || !window.WIMBD_DATA) return;
+    let pairs = groupBy(window.WIMBD_DATA.docs, cfg.field);
+    if (cfg.minCount) pairs = pairs.filter(function (p) { return p[1] >= cfg.minCount; });
+    if (fmt === "json") {
+      downloadJSON(cfg.file + ".json", pairs.map(function (p) {
+        const o = {}; o[cfg.header[0]] = p[0]; o.count = p[1]; return o;
+      }));
+    } else {
+      downloadCSV(cfg.file + ".csv", [cfg.header].concat(pairs));
+    }
+  }
+
+  // ---- drill-down: click a domain bar -> list its articles ----
+  let currentDrill = { kind: "domain", label: "", docs: [], pairs: [] };
+
+  function articleRows(docs) {
+    return docs.map(function (d) {
+      return {
+        url: d.url || "",
+        timestamp: d.timestamp || "",
+        lang_score: d.lang_score,
+        preview: d.preview || ""
+      };
+    });
+  }
+
+  function openDomainDrill(domain) {
+    if (!window.WIMBD_DATA) return;
+    const key = String(domain).toLowerCase();
+    const docs = window.WIMBD_DATA.docs.filter(function (d) {
+      return d.domain && d.domain.toLowerCase() === key;
+    });
+    currentDrill = { kind: "domain", label: domain, docs: docs, pairs: [] };
+
+    document.getElementById("drill-title").textContent =
+      domain + " — " + docs.length + " article" + (docs.length === 1 ? "" : "s");
+
+    const body = document.getElementById("drill-body");
+    body.textContent = "";
+    docs.forEach(function (d) {
+      const row = document.createElement("div");
+      row.className = "article";
+
+      const meta = document.createElement("div");
+      meta.className = "article-meta";
+      const link = document.createElement("a");
+      link.href = d.url || "#";
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = d.url || "(no url)";
+      meta.appendChild(link);
+      const info = document.createElement("span");
+      const score = (d.lang_score === null || d.lang_score === undefined) ? "?" : d.lang_score;
+      info.textContent = (d.timestamp || "?") + "  ·  score " + score;
+      meta.appendChild(info);
+
+      const prev = document.createElement("div");
+      prev.className = "article-preview rtl";
+      prev.textContent = d.preview || "";
+
+      row.appendChild(meta);
+      row.appendChild(prev);
+      body.appendChild(row);
+    });
+
+    document.getElementById("drill-modal").classList.add("open");
+  }
+
+  function renderDomainList(label, titleText, pairs) {
+    currentDrill = { kind: "tld", label: label, docs: [], pairs: pairs };
+    document.getElementById("drill-title").textContent = titleText;
+    const body = document.getElementById("drill-body");
+    body.textContent = "";
+    if (!pairs.length) {
+      const empty = document.createElement("div");
+      empty.className = "article-preview";
+      empty.textContent = "No matches.";
+      body.appendChild(empty);
+    }
+    pairs.forEach(function (p) {
+      const row = document.createElement("div");
+      row.className = "domain-row";
+      const name = document.createElement("span");
+      name.className = "domain-name";
+      name.textContent = p[0];
+      const cnt = document.createElement("span");
+      cnt.className = "domain-count";
+      cnt.textContent = p[1] + (p[1] === 1 ? " article" : " articles");
+      row.appendChild(name);
+      row.appendChild(cnt);
+      row.addEventListener("click", function () { openDomainDrill(p[0]); });
+      body.appendChild(row);
+    });
+    document.getElementById("drill-modal").classList.add("open");
+  }
+
+  function openTldDrill(tld) {
+    if (!window.WIMBD_DATA) return;
+    const key = String(tld).toLowerCase();
+    const pairs = groupBy(window.WIMBD_DATA.docs.filter(function (d) {
+      return d.tld && d.tld.toLowerCase() === key;
+    }), "domain");
+    renderDomainList(tld, "domains ending in ." + tld + " — " + pairs.length +
+      (pairs.length === 1 ? " domain" : " domains"), pairs);
+  }
+
+  function runSearch(q) {
+    q = (q || "").trim();
+    if (!q || !window.WIMBD_DATA) return;
+    const ql = q.toLowerCase();
+    const docs = window.WIMBD_DATA.docs;
+    const tlds = {}, domains = {};
+    docs.forEach(function (d) {
+      if (d.tld) tlds[d.tld.toLowerCase()] = 1;
+      if (d.domain) domains[d.domain.toLowerCase()] = 1;
+    });
+    if (tlds[ql]) { openTldDrill(ql); return; }
+    if (domains[ql]) { openDomainDrill(q); return; }
+    const pairs = groupBy(docs.filter(function (d) {
+      return d.domain && d.domain.toLowerCase().indexOf(ql) !== -1;
+    }), "domain");
+    renderDomainList(q, 'search "' + q + '" — ' + pairs.length +
+      (pairs.length === 1 ? " domain" : " domains"), pairs);
+  }
+
+  function closeDrill() {
+    document.getElementById("drill-modal").classList.remove("open");
+  }
+
+  function safeName(s) {
+    return String(s).replace(/[^\w.\-]+/g, "_");
+  }
+
+  function drillCSV() {
+    if (currentDrill.kind === "tld") {
+      downloadCSV("domains_" + safeName(currentDrill.label) + ".csv",
+        [["domain", "count"]].concat(currentDrill.pairs));
+      return;
+    }
+    const header = ["url", "timestamp", "lang_score", "preview"];
+    const rows = [header].concat(articleRows(currentDrill.docs).map(function (r) {
+      return [r.url, r.timestamp, r.lang_score, r.preview];
+    }));
+    downloadCSV("articles_" + safeName(currentDrill.label) + ".csv", rows);
+  }
+
+  function drillJSON() {
+    if (currentDrill.kind === "tld") {
+      downloadJSON("domains_" + safeName(currentDrill.label) + ".json",
+        currentDrill.pairs.map(function (p) { return { domain: p[0], count: p[1] }; }));
+      return;
+    }
+    downloadJSON("articles_" + safeName(currentDrill.label) + ".json", articleRows(currentDrill.docs));
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(".dl-btn[data-export]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        handleExport(btn.dataset.export, btn.dataset.format);
+      });
+    });
+    document.getElementById("drill-csv").addEventListener("click", drillCSV);
+    document.getElementById("drill-json").addEventListener("click", drillJSON);
+    document.getElementById("drill-close").addEventListener("click", closeDrill);
+    document.getElementById("drill-modal").addEventListener("click", function (e) {
+      if (e.target === this) closeDrill();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeDrill();
+    });
+
+    const searchInput = document.getElementById("drill-search");
+    const searchBtn = document.getElementById("drill-search-btn");
+    if (searchBtn) searchBtn.addEventListener("click", function () { runSearch(searchInput.value); });
+    if (searchInput) searchInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") runSearch(searchInput.value);
+    });
+  });
+
+  function wireChartClick(id, fn) {
+    const gd = document.getElementById(id);
+    if (gd && gd.on) {
+      gd.on("plotly_click", function (data) {
+        if (data && data.points && data.points.length) {
+          const label = data.points[0].y;
+          if (label) fn(label);
+        }
+      });
+    }
+  }
+
+  window.addEventListener("load", function () {
+    wireChartClick("chart_domains", openDomainDrill);
+    wireChartClick("chart_tlds", openTldDrill);
+  });
+})();
+"""
 
 
 def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
@@ -565,8 +840,11 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
     ]
 
     fig_html_blocks: list[str] = []
-    for _, fig in figures:
-        fig_html_blocks.append(pio.to_html(fig, include_plotlyjs=False, full_html=False))
+    for title, fig in figures:
+        div_id = CHART_IDS.get(title)
+        kwargs = {"div_id": div_id} if div_id else {}
+        fig_html_blocks.append(
+            pio.to_html(fig, include_plotlyjs=False, full_html=False, **kwargs))
 
     # tables
     dup_rows = "".join(
@@ -607,10 +885,26 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
         f"<div class='card-value'>{html.escape(v)}</div></div>"
         for k, v in summary_cards
     )
+    def panel_buttons(title: str) -> str:
+        key = EXPORT_PANELS.get(title)
+        if not key:
+            return ""
+        return (
+            f"<span class='dl-group'>"
+            f"<button class='dl-btn' data-export='{key}' data-format='csv'>CSV</button>"
+            f"<button class='dl-btn' data-export='{key}' data-format='json'>JSON</button>"
+            f"</span>"
+        )
+
     figs_html = "".join(
-        f"<section class='panel'><h3>{html.escape(title)}</h3>{block}</section>"
+        f"<section class='panel'><div class='panel-head'>"
+        f"<h3>{html.escape(title)}</h3>{panel_buttons(title)}</div>{block}</section>"
         for (title, _), block in zip(figures, fig_html_blocks)
     )
+
+    doc_index = res.get("_doc_summaries", [])
+    data_json = json.dumps({"docs": doc_index}, ensure_ascii=False).replace("</", "<\\/")
+    data_script = "<script>window.WIMBD_DATA = " + data_json + ";</script>"
 
     html_doc = f"""<!doctype html>
 <html lang='en'>
@@ -636,6 +930,11 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
             padding: 8px 8px 4px 8px; }}
   .panel h3 {{ margin:6px 12px 0 12px; font-size:14px; color:#94a3b8;
                font-weight: 500; }}
+  .panel-head {{ display:flex; align-items:center; justify-content:space-between; }}
+  .dl-group {{ display:flex; gap:6px; margin:6px 8px 0 0; }}
+  .dl-btn {{ background:#1f2937; color:#cbd5e1; border:1px solid #374151;
+             border-radius:6px; padding:2px 10px; font-size:12px; cursor:pointer; }}
+  .dl-btn:hover {{ background:#374151; color:#fff; }}
   details {{ background:#0e1117; border:1px solid #1f2937; border-radius:10px;
              padding: 12px 16px; margin-top: 18px; }}
   details > summary {{ cursor:pointer; font-weight:600; color:#cbd5e1; }}
@@ -647,6 +946,34 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
   a {{ color:#60a5fa; text-decoration:none; }}
   .rtl {{ direction: rtl; text-align: right; }}
   .meta {{ font-size:12px; color:#64748b; margin-top: 32px; }}
+  .modal-backdrop {{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6);
+                     z-index:1000; }}
+  .modal-backdrop.open {{ display:flex; align-items:center; justify-content:center; }}
+  .modal {{ background:#0e1117; border:1px solid #374151; border-radius:12px;
+            width:min(880px, 92vw); max-height:86vh; display:flex;
+            flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.5); }}
+  .modal-head {{ display:flex; align-items:center; gap:10px; padding:14px 16px;
+                 border-bottom:1px solid #1f2937; }}
+  .modal-title {{ font-size:15px; font-weight:600; color:#e5e7eb; flex:1; }}
+  .modal-close {{ background:none; border:none; color:#94a3b8; font-size:20px;
+                  cursor:pointer; line-height:1; padding:0 4px; }}
+  .modal-close:hover {{ color:#fff; }}
+  .modal-body {{ overflow:auto; padding:8px 16px 16px; }}
+  .article {{ border-bottom:1px solid #1f2937; padding:10px 0; }}
+  .article-meta {{ font-size:12px; color:#94a3b8; margin-bottom:4px;
+                   display:flex; gap:12px; flex-wrap:wrap; }}
+  .article-meta a {{ word-break:break-all; }}
+  .article-preview {{ font-size:13px; color:#cbd5e1; }}
+  .search-bar {{ display:flex; gap:8px; margin-bottom:20px; }}
+  #drill-search {{ flex:1; max-width:520px; background:#111827; color:#e5e7eb;
+                   border:1px solid #374151; border-radius:8px; padding:8px 12px;
+                   font-size:14px; }}
+  #drill-search::placeholder {{ color:#64748b; }}
+  .domain-row {{ display:flex; align-items:center; justify-content:space-between;
+                 padding:8px 4px; border-bottom:1px solid #1f2937; cursor:pointer; }}
+  .domain-row:hover {{ background:#111827; }}
+  .domain-name {{ color:#60a5fa; }}
+  .domain-count {{ color:#94a3b8; font-size:12px; }}
 </style>
 </head>
 <body>
@@ -655,6 +982,12 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
                    analyses adapted from <em>What's In My Big Data?</em>
                    (Elazar et&nbsp;al., 2023, arXiv:2310.20707)</div>
   <div class='cards'>{cards_html}</div>
+
+  <div class='search-bar'>
+    <input id='drill-search' type='text' autocomplete='off'
+           placeholder='Search a domain or TLD — e.g. aljazeera.net or net' />
+    <button class='dl-btn' id='drill-search-btn'>Search</button>
+  </div>
 
   <h2>Distributions &amp; counts</h2>
   <div class='grid'>{figs_html}</div>
@@ -683,6 +1016,20 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
   </details>
 
   <div class='meta'>Generated by wimbd_arabic.py</div>
+
+  <div id='drill-modal' class='modal-backdrop'>
+    <div class='modal'>
+      <div class='modal-head'>
+        <span class='modal-title' id='drill-title'></span>
+        <button class='dl-btn' id='drill-csv'>CSV</button>
+        <button class='dl-btn' id='drill-json'>JSON</button>
+        <button class='modal-close' id='drill-close' title='Close'>&times;</button>
+      </div>
+      <div class='modal-body' id='drill-body'></div>
+    </div>
+  </div>
+  {data_script}
+  <script>{DASHBOARD_JS}</script>
 </body></html>"""
 
     out_path.write_text(html_doc, encoding="utf-8")
