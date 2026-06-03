@@ -494,6 +494,7 @@ EXPORT_PANELS = {
 CHART_IDS = {
     "Top domains": "chart_domains",
     "Top TLDs": "chart_tlds",
+    "Top URL suffixes": "chart_suffixes",
 }
 
 
@@ -654,6 +655,16 @@ DASHBOARD_JS = r"""
       (pairs.length === 1 ? " domain" : " domains"), pairs);
   }
 
+  function openSuffixDrill(suffix) {
+    if (!window.WIMBD_DATA) return;
+    const key = String(suffix).toLowerCase();
+    const pairs = groupBy(window.WIMBD_DATA.docs.filter(function (d) {
+      return d.suffix && d.suffix.toLowerCase() === key;
+    }), "domain");
+    renderDomainList(suffix, "domains with suffix ." + suffix + " — " + pairs.length +
+      (pairs.length === 1 ? " domain" : " domains"), pairs);
+  }
+
   function runSearch(q) {
     q = (q || "").trim();
     if (!q || !window.WIMBD_DATA) return;
@@ -742,6 +753,7 @@ DASHBOARD_JS = r"""
   window.addEventListener("load", function () {
     wireChartClick("chart_domains", openDomainDrill);
     wireChartClick("chart_tlds", openTldDrill);
+    wireChartClick("chart_suffixes", openSuffixDrill);
   });
 })();
 """
