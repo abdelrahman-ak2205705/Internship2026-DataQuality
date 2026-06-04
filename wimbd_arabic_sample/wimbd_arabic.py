@@ -250,8 +250,10 @@ def analyze(records: list[dict]) -> dict[str, Any]:
     res["top_unigrams"] = [(w, c) for w, c in unigram_counter.most_common(NGRAM_TOP_K)]
     res["top_bigrams"]  = [(" ".join(g), c) for g, c in bigram_counter.most_common(NGRAM_TOP_K)]
     res["top_trigrams"] = [(" ".join(g), c) for g, c in trigram_counter.most_common(NGRAM_TOP_K)]
-    # larger bigram list for the Save button (popped from results.json; embedded in dashboard)
-    res["_export_bigrams"] = [(" ".join(g), c) for g, c in bigram_counter.most_common(200)]
+    # larger n-gram lists for the Save buttons (popped from results.json; embedded in dashboard)
+    res["_export_unigrams"] = [(w, c) for w, c in unigram_counter.most_common(200)]
+    res["_export_bigrams"]  = [(" ".join(g), c) for g, c in bigram_counter.most_common(200)]
+    res["_export_trigrams"] = [(" ".join(g), c) for g, c in trigram_counter.most_common(200)]
     res["vocab"] = {
         "n_types": len(unigram_counter),
         "n_unique_after_norm": len(type_token_seen),
@@ -352,6 +354,7 @@ def analyze(records: list[dict]) -> dict[str, Any]:
     for d in docs:
         toks = set(tokenize(normalize_ar(d["text"])))
         hits = toks & OFFENSIVE_WORDS
+        d["offensive"] = sorted(hits)   # normalized terms; used by the drill-down
         if hits:
             offensive_doc_hits += 1
             offensive_hits.update(hits)
@@ -359,6 +362,8 @@ def analyze(records: list[dict]) -> dict[str, Any]:
         "n_docs_with_offensive": offensive_doc_hits,
         "top_terms": offensive_hits.most_common(TOP_K),
     }
+    # full term list for the Save button (popped from results.json; embedded in dashboard)
+    res["_export_offensive"] = offensive_hits.most_common()
 
     # ---- §7 self-contamination via 50-gram match ------------------------
     # Map every 50-gram to the doc id; collisions = repeated long span.
@@ -406,6 +411,7 @@ def analyze(records: list[dict]) -> dict[str, Any]:
         "timestamp": d["timestamp"],
         "preview": (d["text"] or "")[:800],
         "pii": d.get("pii") or {},
+        "offensive": d.get("offensive") or [],
     } for d in docs]
 
     return res
@@ -502,7 +508,10 @@ EXPORT_PANELS = {
     "Top TLDs": "tlds",
     "Top URL suffixes": "suffixes",
     "Duplicate URLs": "dupes",
+    "Top unigrams": "unigrams",
     "Top bigrams": "bigrams",
+    "Top trigrams": "trigrams",
+    "Offensive terms": "offensive",
     "PII counts": "pii_counts",
 }
 
@@ -513,6 +522,7 @@ CHART_IDS = {
     "Top URL suffixes": "chart_suffixes",
     "Status": "chart_status",
     "PII counts": "chart_pii",
+    "Offensive terms": "chart_offensive",
 }
 
 
@@ -563,7 +573,10 @@ DASHBOARD_JS = r"""
     tlds:       { field: "tld",    header: ["tld", "count"],         file: "top_tlds" },
     suffixes:   { field: "suffix", header: ["suffix", "count"],      file: "top_suffixes" },
     dupes:      { field: "url",    header: ["url", "count"],         file: "duplicate_urls", minCount: 2 },
+    unigrams:   { list: "unigrams", header: ["unigram", "count"],    file: "top_unigrams" },
     bigrams:    { list: "bigrams", header: ["bigram", "count"],      file: "top_bigrams" },
+    trigrams:   { list: "trigrams", header: ["trigram", "count"],    file: "top_trigrams" },
+    offensive:  { list: "offensive", header: ["term", "count"],      file: "offensive_terms" },
     pii_counts: { list: "pii_counts", header: ["pii_type", "count"], file: "pii_counts" }
   };
 
@@ -600,8 +613,9 @@ DASHBOARD_JS = r"""
     });
   }
 
-  function showArticles(label, titleText, docs, piiField) {
-    currentDrill = { kind: "domain", label: label, docs: docs, pairs: [], piiField: piiField || null };
+  function showArticles(label, titleText, docs, piiField, offensive) {
+    currentDrill = { kind: "domain", label: label, docs: docs, pairs: [],
+                     piiField: piiField || null, offensive: offensive || false };
     document.getElementById("drill-title").textContent = titleText;
     const body = document.getElementById("drill-body");
     body.textContent = "";
@@ -631,6 +645,12 @@ DASHBOARD_JS = r"""
         const hit = document.createElement("div");
         hit.className = "article-pii";
         hit.textContent = piiField + ": " + d.pii[piiField].join(", ");
+        row.appendChild(hit);
+      }
+      if (offensive && d.offensive && d.offensive.length) {
+        const hit = document.createElement("div");
+        hit.className = "article-pii rtl";
+        hit.textContent = "offensive: " + d.offensive.join(", ");
         row.appendChild(hit);
       }
       row.appendChild(prev);
@@ -665,6 +685,25 @@ DASHBOARD_JS = r"""
       title += " · " + total + " match" + (total === 1 ? "" : "es");
     }
     showArticles(category, title, docs, category);
+  }
+
+  // The offensive-terms bar chart reverses Arabic labels for left-to-right
+  // display; undo that so the clicked term matches the stored (normalized) token.
+  function unreverseLabel(s) {
+    s = String(s);
+    return /[؀-ۿݐ-ݿࢠ-ࣿ]/.test(s)
+      ? s.split("").reverse().join("")
+      : s;
+  }
+
+  function openOffensiveDrill(term) {
+    if (!window.WIMBD_DATA) return;
+    const key = String(term);
+    const docs = window.WIMBD_DATA.docs.filter(function (d) {
+      return d.offensive && d.offensive.indexOf(key) !== -1;
+    });
+    showArticles(key, "offensive: " + key + " — " + docs.length +
+      " document" + (docs.length === 1 ? "" : "s"), docs, null, true);
   }
 
   function openDomainDrill(domain) {
@@ -772,10 +811,16 @@ DASHBOARD_JS = r"""
       downloadCSV("pii_" + safeName(pf) + "_matches.csv", rows);
       return;
     }
-    const rows = [["url", "timestamp", "lang_score", "preview"]].concat(
-      currentDrill.docs.map(function (d) {
-        return [d.url || "", d.timestamp || "", d.lang_score, d.preview || ""];
-      }));
+    const off = currentDrill.offensive;
+    const header = off
+      ? ["url", "timestamp", "lang_score", "offensive_terms", "preview"]
+      : ["url", "timestamp", "lang_score", "preview"];
+    const rows = [header].concat(currentDrill.docs.map(function (d) {
+      const r = [d.url || "", d.timestamp || "", d.lang_score];
+      if (off) r.push(d.offensive ? d.offensive.join(" | ") : "");
+      r.push(d.preview || "");
+      return r;
+    }));
     downloadCSV("articles_" + safeName(currentDrill.label) + ".csv", rows);
   }
 
@@ -793,9 +838,12 @@ DASHBOARD_JS = r"""
       downloadJSON("pii_" + safeName(pf) + "_matches.json", out);
       return;
     }
+    const off = currentDrill.offensive;
     const out = currentDrill.docs.map(function (d) {
-      return { url: d.url || "", timestamp: d.timestamp || "",
-               lang_score: d.lang_score, preview: d.preview || "" };
+      const o = { url: d.url || "", timestamp: d.timestamp || "",
+                  lang_score: d.lang_score, preview: d.preview || "" };
+      if (off) o.offensive_terms = d.offensive || [];
+      return o;
     });
     downloadJSON("articles_" + safeName(currentDrill.label) + ".json", out);
   }
@@ -845,6 +893,7 @@ DASHBOARD_JS = r"""
     wireChartClick("chart_suffixes", openSuffixDrill);
     wireChartClick("chart_status", openStatusDrill, function (pt) { return pt.label; });
     wireChartClick("chart_pii", openPiiDrill, function (pt) { return pt.x; });
+    wireChartClick("chart_offensive", openOffensiveDrill, function (pt) { return unreverseLabel(pt.y); });
   });
 })();
 """
@@ -1009,7 +1058,10 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
     data_obj = {
         "docs": doc_index,
         "lists": {
+            "unigrams": res.get("_export_unigrams", []),
             "bigrams": res.get("_export_bigrams", []),
+            "trigrams": res.get("_export_trigrams", []),
+            "offensive": res.get("_export_offensive", []),
             "pii_counts": list(res["pii"]["counts"].items()),
             "pii_values": res.get("_export_pii_values", {}),
         },
@@ -1223,7 +1275,10 @@ def main() -> None:
         res_for_json["length_stats"][k].pop("samples", None)
     res_for_json["lang_score_stats"].pop("samples", None)
     res_for_json.pop("_doc_summaries", None)
+    res_for_json.pop("_export_unigrams", None)
     res_for_json.pop("_export_bigrams", None)
+    res_for_json.pop("_export_trigrams", None)
+    res_for_json.pop("_export_offensive", None)
     res_for_json.pop("_export_pii_values", None)
 
     json_out.write_text(json.dumps(res_for_json, ensure_ascii=False, indent=2),
