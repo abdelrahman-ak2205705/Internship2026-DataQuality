@@ -250,6 +250,8 @@ def analyze(records: list[dict]) -> dict[str, Any]:
     res["top_unigrams"] = [(w, c) for w, c in unigram_counter.most_common(NGRAM_TOP_K)]
     res["top_bigrams"]  = [(" ".join(g), c) for g, c in bigram_counter.most_common(NGRAM_TOP_K)]
     res["top_trigrams"] = [(" ".join(g), c) for g, c in trigram_counter.most_common(NGRAM_TOP_K)]
+    # larger bigram list for the Save button (popped from results.json; embedded in dashboard)
+    res["_export_bigrams"] = [(" ".join(g), c) for g, c in bigram_counter.most_common(200)]
     res["vocab"] = {
         "n_types": len(unigram_counter),
         "n_unique_after_norm": len(type_token_seen),
@@ -317,22 +319,32 @@ def analyze(records: list[dict]) -> dict[str, Any]:
     pii_counts: dict[str, int] = {k: 0 for k in PII_PATTERNS}
     pii_docs:   dict[str, int] = {k: 0 for k in PII_PATTERNS}
     pii_examples: dict[str, list[str]] = {k: [] for k in PII_PATTERNS}
+    # full, uncapped list of every match per category, with its source doc,
+    # so the dashboard can export ALL matched values (e.g. all 599 URLs).
+    pii_values_export: dict[str, list[list[str]]] = {k: [] for k in PII_PATTERNS}
     for d in docs:
         text = d["text"]
+        doc_pii: dict[str, list[str]] = {}
+        src_url    = d.get("url") or ""
+        src_domain = d.get("domain") or ""
         for kind, pat in PII_PATTERNS.items():
             matches = pat.findall(text)
             if matches:
+                vals = [m if isinstance(m, str) else " ".join(m) for m in matches]
                 pii_counts[kind] += len(matches)
                 pii_docs[kind]   += 1
+                doc_pii[kind] = vals[:10]   # cap per category to bound embed size
+                for v in vals:
+                    pii_values_export[kind].append([v, src_url, src_domain])
                 if len(pii_examples[kind]) < 10:
-                    pii_examples[kind].append(
-                        matches[0] if isinstance(matches[0], str) else " ".join(matches[0])
-                    )
+                    pii_examples[kind].append(vals[0])
+        d["pii"] = doc_pii
     res["pii"] = {
         "counts": pii_counts,
         "docs_containing": pii_docs,
         "examples": pii_examples,
     }
+    res["_export_pii_values"] = pii_values_export
 
     # ---- §6.2 profanity / offensive blocklist ---------------------------
     offensive_hits = collections.Counter()
@@ -386,12 +398,14 @@ def analyze(records: list[dict]) -> dict[str, Any]:
         "domain": d.get("domain"),
         "tld": d.get("tld"),
         "suffix": d.get("suffix"),
+        "status": d.get("status"),
         "lang": d["lang"],
         "lang_score": d["lang_score"],
         "n_tokens": d["n_tokens"],
         "n_chars": d["n_chars"],
         "timestamp": d["timestamp"],
         "preview": (d["text"] or "")[:800],
+        "pii": d.get("pii") or {},
     } for d in docs]
 
     return res
@@ -488,6 +502,8 @@ EXPORT_PANELS = {
     "Top TLDs": "tlds",
     "Top URL suffixes": "suffixes",
     "Duplicate URLs": "dupes",
+    "Top bigrams": "bigrams",
+    "PII counts": "pii_counts",
 }
 
 # Charts that get a stable div id so JS can attach click handlers (drill-down).
@@ -495,6 +511,8 @@ CHART_IDS = {
     "Top domains": "chart_domains",
     "Top TLDs": "chart_tlds",
     "Top URL suffixes": "chart_suffixes",
+    "Status": "chart_status",
+    "PII counts": "chart_pii",
 }
 
 
@@ -541,17 +559,24 @@ DASHBOARD_JS = r"""
   }
 
   const EXPORTS = {
-    domains:  { field: "domain", header: ["domain", "count"],  file: "top_domains" },
-    tlds:     { field: "tld",    header: ["tld", "count"],      file: "top_tlds" },
-    suffixes: { field: "suffix", header: ["suffix", "count"],   file: "top_suffixes" },
-    dupes:    { field: "url",    header: ["url", "count"],      file: "duplicate_urls", minCount: 2 }
+    domains:    { field: "domain", header: ["domain", "count"],     file: "top_domains" },
+    tlds:       { field: "tld",    header: ["tld", "count"],         file: "top_tlds" },
+    suffixes:   { field: "suffix", header: ["suffix", "count"],      file: "top_suffixes" },
+    dupes:      { field: "url",    header: ["url", "count"],         file: "duplicate_urls", minCount: 2 },
+    bigrams:    { list: "bigrams", header: ["bigram", "count"],      file: "top_bigrams" },
+    pii_counts: { list: "pii_counts", header: ["pii_type", "count"], file: "pii_counts" }
   };
 
   function handleExport(key, fmt) {
     const cfg = EXPORTS[key];
     if (!cfg || !window.WIMBD_DATA) return;
-    let pairs = groupBy(window.WIMBD_DATA.docs, cfg.field);
-    if (cfg.minCount) pairs = pairs.filter(function (p) { return p[1] >= cfg.minCount; });
+    let pairs;
+    if (cfg.list) {
+      pairs = (window.WIMBD_DATA.lists && window.WIMBD_DATA.lists[cfg.list]) || [];
+    } else {
+      pairs = groupBy(window.WIMBD_DATA.docs, cfg.field);
+      if (cfg.minCount) pairs = pairs.filter(function (p) { return p[1] >= cfg.minCount; });
+    }
     if (fmt === "json") {
       downloadJSON(cfg.file + ".json", pairs.map(function (p) {
         const o = {}; o[cfg.header[0]] = p[0]; o.count = p[1]; return o;
@@ -575,17 +600,9 @@ DASHBOARD_JS = r"""
     });
   }
 
-  function openDomainDrill(domain) {
-    if (!window.WIMBD_DATA) return;
-    const key = String(domain).toLowerCase();
-    const docs = window.WIMBD_DATA.docs.filter(function (d) {
-      return d.domain && d.domain.toLowerCase() === key;
-    });
-    currentDrill = { kind: "domain", label: domain, docs: docs, pairs: [] };
-
-    document.getElementById("drill-title").textContent =
-      domain + " — " + docs.length + " article" + (docs.length === 1 ? "" : "s");
-
+  function showArticles(label, titleText, docs, piiField) {
+    currentDrill = { kind: "domain", label: label, docs: docs, pairs: [], piiField: piiField || null };
+    document.getElementById("drill-title").textContent = titleText;
     const body = document.getElementById("drill-body");
     body.textContent = "";
     docs.forEach(function (d) {
@@ -610,11 +627,61 @@ DASHBOARD_JS = r"""
       prev.textContent = d.preview || "";
 
       row.appendChild(meta);
+      if (piiField && d.pii && d.pii[piiField]) {
+        const hit = document.createElement("div");
+        hit.className = "article-pii";
+        hit.textContent = piiField + ": " + d.pii[piiField].join(", ");
+        row.appendChild(hit);
+      }
       row.appendChild(prev);
       body.appendChild(row);
     });
-
     document.getElementById("drill-modal").classList.add("open");
+  }
+
+  function piiValues(category) {
+    const lists = window.WIMBD_DATA && window.WIMBD_DATA.lists;
+    return (lists && lists.pii_values && lists.pii_values[category]) || [];
+  }
+
+  function piiTotalMatches(category) {
+    const lists = window.WIMBD_DATA && window.WIMBD_DATA.lists;
+    const pairs = (lists && lists.pii_counts) || [];
+    for (let i = 0; i < pairs.length; i++) {
+      if (pairs[i][0] === category) return pairs[i][1];
+    }
+    return null;
+  }
+
+  function openPiiDrill(category) {
+    if (!window.WIMBD_DATA) return;
+    const docs = window.WIMBD_DATA.docs.filter(function (d) {
+      return d.pii && d.pii[category] && d.pii[category].length;
+    });
+    const total = piiTotalMatches(category);
+    let title = "PII: " + category + " — " + docs.length +
+      " document" + (docs.length === 1 ? "" : "s");
+    if (total !== null) {
+      title += " · " + total + " match" + (total === 1 ? "" : "es");
+    }
+    showArticles(category, title, docs, category);
+  }
+
+  function openDomainDrill(domain) {
+    if (!window.WIMBD_DATA) return;
+    const key = String(domain).toLowerCase();
+    const docs = window.WIMBD_DATA.docs.filter(function (d) {
+      return d.domain && d.domain.toLowerCase() === key;
+    });
+    showArticles(domain, domain + " — " + docs.length +
+      " article" + (docs.length === 1 ? "" : "s"), docs);
+  }
+
+  function openStatusDrill(status) {
+    if (!window.WIMBD_DATA) return;
+    const docs = window.WIMBD_DATA.docs.filter(function (d) { return d.status === status; });
+    showArticles(status, status + " — " + docs.length +
+      " document" + (docs.length === 1 ? "" : "s"), docs);
   }
 
   function renderDomainList(label, titleText, pairs) {
@@ -698,10 +765,17 @@ DASHBOARD_JS = r"""
         [["domain", "count"]].concat(currentDrill.pairs));
       return;
     }
-    const header = ["url", "timestamp", "lang_score", "preview"];
-    const rows = [header].concat(articleRows(currentDrill.docs).map(function (r) {
-      return [r.url, r.timestamp, r.lang_score, r.preview];
-    }));
+    const pf = currentDrill.piiField;
+    if (pf) {
+      const vals = piiValues(pf);
+      const rows = [["value", "url", "domain"]].concat(vals);
+      downloadCSV("pii_" + safeName(pf) + "_matches.csv", rows);
+      return;
+    }
+    const rows = [["url", "timestamp", "lang_score", "preview"]].concat(
+      currentDrill.docs.map(function (d) {
+        return [d.url || "", d.timestamp || "", d.lang_score, d.preview || ""];
+      }));
     downloadCSV("articles_" + safeName(currentDrill.label) + ".csv", rows);
   }
 
@@ -711,7 +785,19 @@ DASHBOARD_JS = r"""
         currentDrill.pairs.map(function (p) { return { domain: p[0], count: p[1] }; }));
       return;
     }
-    downloadJSON("articles_" + safeName(currentDrill.label) + ".json", articleRows(currentDrill.docs));
+    const pf = currentDrill.piiField;
+    if (pf) {
+      const out = piiValues(pf).map(function (v) {
+        return { value: v[0], url: v[1], domain: v[2] };
+      });
+      downloadJSON("pii_" + safeName(pf) + "_matches.json", out);
+      return;
+    }
+    const out = currentDrill.docs.map(function (d) {
+      return { url: d.url || "", timestamp: d.timestamp || "",
+               lang_score: d.lang_score, preview: d.preview || "" };
+    });
+    downloadJSON("articles_" + safeName(currentDrill.label) + ".json", out);
   }
 
   document.addEventListener("DOMContentLoaded", function () {
@@ -738,15 +824,18 @@ DASHBOARD_JS = r"""
     });
   });
 
-  function wireChartClick(id, fn) {
+  function wireChartClick(id, fn, getLabel) {
     const gd = document.getElementById(id);
     if (gd && gd.on) {
       gd.on("plotly_click", function (data) {
         if (data && data.points && data.points.length) {
-          const label = data.points[0].y;
+          const pt = data.points[0];
+          const label = getLabel ? getLabel(pt) : pt.y;
           if (label) fn(label);
         }
       });
+      gd.on("plotly_hover", function () { gd.style.cursor = "pointer"; });
+      gd.on("plotly_unhover", function () { gd.style.cursor = ""; });
     }
   }
 
@@ -754,6 +843,8 @@ DASHBOARD_JS = r"""
     wireChartClick("chart_domains", openDomainDrill);
     wireChartClick("chart_tlds", openTldDrill);
     wireChartClick("chart_suffixes", openSuffixDrill);
+    wireChartClick("chart_status", openStatusDrill, function (pt) { return pt.label; });
+    wireChartClick("chart_pii", openPiiDrill, function (pt) { return pt.x; });
   });
 })();
 """
@@ -915,7 +1006,15 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
     )
 
     doc_index = res.get("_doc_summaries", [])
-    data_json = json.dumps({"docs": doc_index}, ensure_ascii=False).replace("</", "<\\/")
+    data_obj = {
+        "docs": doc_index,
+        "lists": {
+            "bigrams": res.get("_export_bigrams", []),
+            "pii_counts": list(res["pii"]["counts"].items()),
+            "pii_values": res.get("_export_pii_values", {}),
+        },
+    }
+    data_json = json.dumps(data_obj, ensure_ascii=False).replace("</", "<\\/")
     data_script = "<script>window.WIMBD_DATA = " + data_json + ";</script>"
 
     html_doc = f"""<!doctype html>
@@ -976,6 +1075,8 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
                    display:flex; gap:12px; flex-wrap:wrap; }}
   .article-meta a {{ word-break:break-all; }}
   .article-preview {{ font-size:13px; color:#cbd5e1; }}
+  .article-pii {{ font-size:12px; color:#fca5a5; margin:2px 0 4px;
+                  font-family: monospace; word-break:break-all; }}
   .search-bar {{ display:flex; gap:8px; margin-bottom:20px; }}
   #drill-search {{ flex:1; max-width:520px; background:#111827; color:#e5e7eb;
                    border:1px solid #374151; border-radius:8px; padding:8px 12px;
@@ -1122,6 +1223,8 @@ def main() -> None:
         res_for_json["length_stats"][k].pop("samples", None)
     res_for_json["lang_score_stats"].pop("samples", None)
     res_for_json.pop("_doc_summaries", None)
+    res_for_json.pop("_export_bigrams", None)
+    res_for_json.pop("_export_pii_values", None)
 
     json_out.write_text(json.dumps(res_for_json, ensure_ascii=False, indent=2),
                         encoding="utf-8")
