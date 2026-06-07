@@ -465,13 +465,22 @@ def fig_length_hist(stats: dict, title: str, color: str) -> go.Figure:
     return fig
 
 
+def _rtl_label(s: str) -> str:
+    """Wrap an Arabic-containing label in Unicode RTL-embedding marks (U+202B …
+    U+202C) so the browser's bidi algorithm renders it right-to-left. Plotly axis
+    ticks are laid out left-to-right, so without this Arabic words display in the
+    wrong order. The marks are zero-width / invisible; non-Arabic labels (numbers,
+    Latin) are returned unchanged."""
+    return f"\u202B{s}\u202C" if regex.search(r"\p{Arabic}", s) else s
+
+
 def fig_topk_bar(items: list[tuple[str, int]], title: str, color: str,
-                 horizontal: bool = True, reverse_text: bool = False) -> go.Figure:
+                 horizontal: bool = True, rtl: bool = False) -> go.Figure:
     if not items:
         return go.Figure().update_layout(**_layout(title + " (no data)"))
     labels, counts = zip(*items)
-    if reverse_text:
-        labels = [l[::-1] if regex.search(r"\p{Arabic}", l) else l for l in labels]
+    if rtl:
+        labels = [_rtl_label(l) for l in labels]
     if horizontal:
         fig = go.Figure(go.Bar(
             x=list(counts)[::-1], y=list(labels)[::-1],
@@ -479,6 +488,13 @@ def fig_topk_bar(items: list[tuple[str, int]], title: str, color: str,
     else:
         fig = go.Figure(go.Bar(x=list(labels), y=list(counts), marker_color=color))
     fig.update_layout(**_layout(title), height=max(380, 22 * len(items)))
+    if horizontal:
+        # automargin: auto-expand left margin so labels aren't clipped.
+        # transparent outside ticks: add a gap between the y-axis labels and the bars.
+        fig.update_yaxes(automargin=True, ticks="outside", ticklen=10,
+                         tickcolor="rgba(0,0,0,0)")
+    else:
+        fig.update_yaxes(automargin=True)
     return fig
 
 
@@ -719,13 +735,11 @@ DASHBOARD_JS = r"""
     showArticles(category, title, docs, category);
   }
 
-  // The offensive-terms bar chart reverses Arabic labels for left-to-right
-  // display; undo that so the clicked term matches the stored (normalized) token.
-  function unreverseLabel(s) {
-    s = String(s);
-    return /[؀-ۿݐ-ݿࢠ-ࣿ]/.test(s)
-      ? s.split("").reverse().join("")
-      : s;
+  // The offensive-terms bar chart wraps Arabic labels in invisible RTL-embedding
+  // marks (U+202B / U+202C) for correct display; strip them so the clicked term
+  // matches the stored (normalized) token.
+  function stripDirectional(s) {
+    return String(s).replace(/[\u202A-\u202E\u200E\u200F\u2066-\u2069]/g, "");
   }
 
   function openOffensiveDrill(term) {
@@ -940,7 +954,7 @@ DASHBOARD_JS = r"""
     wireChartClick("chart_status", openStatusDrill, function (pt) { return pt.label; });
     wireChartClick("chart_pii", openPiiDrill, function (pt) { return pt.x; });
     wireChartClick("chart_pii_docs", openPiiDrill, function (pt) { return pt.x; });
-    wireChartClick("chart_offensive", openOffensiveDrill, function (pt) { return unreverseLabel(pt.y); });
+    wireChartClick("chart_offensive", openOffensiveDrill, function (pt) { return stripDirectional(pt.y); });
     wireChartClick("chart_languages", openLanguageDrill, function (pt) { return pt.label; });
     wireChartClick("chart_content_types", openContentTypeDrill, function (pt) { return pt.label; });
   });
@@ -995,11 +1009,11 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
     # in a left-to-right Plotly layout)
     figures.append(("Top unigrams",
         fig_topk_bar(res["top_unigrams"], "Top unigrams (post-normalization, stopwords removed)",
-                     ACCENT, reverse_text=True)))
+                     ACCENT, rtl=True)))
     figures.append(("Top bigrams",
-        fig_topk_bar(res["top_bigrams"], "Top bigrams", ACCENT2, reverse_text=True)))
+        fig_topk_bar(res["top_bigrams"], "Top bigrams", ACCENT2, rtl=True)))
     figures.append(("Top trigrams",
-        fig_topk_bar(res["top_trigrams"], "Top trigrams", ACCENT3, reverse_text=True)))
+        fig_topk_bar(res["top_trigrams"], "Top trigrams", ACCENT3, rtl=True)))
 
     # word-length distribution
     wl = res["vocab"]["word_length_distribution"]
@@ -1021,7 +1035,7 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
         figures.append(("Offensive terms",
             fig_topk_bar(res["offensive"]["top_terms"],
                          "Offensive / profanity terms found",
-                         "#ef4444", reverse_text=True)))
+                         "#ef4444", rtl=True)))
 
     # ---- assemble HTML --------------------------------------------------
     summary_cards = [
