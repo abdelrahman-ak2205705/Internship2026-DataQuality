@@ -404,6 +404,7 @@ def analyze(records: list[dict]) -> dict[str, Any]:
         "tld": d.get("tld"),
         "suffix": d.get("suffix"),
         "status": d.get("status"),
+        "content_type": d.get("content_type"),
         "lang": d["lang"],
         "lang_score": d["lang_score"],
         "n_tokens": d["n_tokens"],
@@ -513,6 +514,20 @@ EXPORT_PANELS = {
     "Top trigrams": "trigrams",
     "Offensive terms": "offensive",
     "PII counts": "pii_counts",
+    "PII docs": "pii_docs",
+    "Languages": "languages",
+    "Content types": "content_types",
+    "Status": "statuses",
+    "Documents per year": "by_year",
+    "Documents per month": "by_month",
+    "Word length distribution": "word_lengths",
+    "Tokens / document": "stats_tokens",
+    "Chars / document": "stats_chars",
+    "Bytes / document": "stats_bytes",
+    "Alpha ratio": "stats_alpha",
+    "Symbol/word ratio": "stats_symbol",
+    "Mean word length": "stats_meanwl",
+    "langdetect confidence": "stats_langconf",
 }
 
 # Charts that get a stable div id so JS can attach click handlers (drill-down).
@@ -522,7 +537,10 @@ CHART_IDS = {
     "Top URL suffixes": "chart_suffixes",
     "Status": "chart_status",
     "PII counts": "chart_pii",
+    "PII docs": "chart_pii_docs",
     "Offensive terms": "chart_offensive",
+    "Languages": "chart_languages",
+    "Content types": "chart_content_types",
 }
 
 
@@ -577,7 +595,21 @@ DASHBOARD_JS = r"""
     bigrams:    { list: "bigrams", header: ["bigram", "count"],      file: "top_bigrams" },
     trigrams:   { list: "trigrams", header: ["trigram", "count"],    file: "top_trigrams" },
     offensive:  { list: "offensive", header: ["term", "count"],      file: "offensive_terms" },
-    pii_counts: { list: "pii_counts", header: ["pii_type", "count"], file: "pii_counts" }
+    pii_counts: { list: "pii_counts", header: ["pii_type", "count"], file: "pii_counts" },
+    pii_docs:   { list: "pii_docs", header: ["pii_type", "count"],   file: "pii_docs" },
+    languages:     { list: "languages", header: ["language", "count"],         file: "languages" },
+    content_types: { list: "content_types", header: ["content_type", "count"], file: "content_types" },
+    statuses:      { list: "statuses", header: ["status", "count"],            file: "record_status" },
+    by_year:    { list: "by_year", header: ["year", "count"],        file: "docs_per_year" },
+    by_month:   { list: "by_month", header: ["month", "count"],      file: "docs_per_month" },
+    word_lengths: { list: "word_lengths", header: ["word_length", "count"], file: "word_length_distribution" },
+    stats_tokens:  { list: "stats_tokens", header: ["metric", "value"],  file: "tokens_per_doc_stats" },
+    stats_chars:   { list: "stats_chars", header: ["metric", "value"],   file: "chars_per_doc_stats" },
+    stats_bytes:   { list: "stats_bytes", header: ["metric", "value"],   file: "bytes_per_doc_stats" },
+    stats_alpha:   { list: "stats_alpha", header: ["metric", "value"],   file: "alpha_ratio_stats" },
+    stats_symbol:  { list: "stats_symbol", header: ["metric", "value"],  file: "symbol_per_word_stats" },
+    stats_meanwl:  { list: "stats_meanwl", header: ["metric", "value"],  file: "mean_word_length_stats" },
+    stats_langconf:{ list: "stats_langconf", header: ["metric", "value"],file: "langdetect_confidence_stats" }
   };
 
   function handleExport(key, fmt) {
@@ -592,7 +624,7 @@ DASHBOARD_JS = r"""
     }
     if (fmt === "json") {
       downloadJSON(cfg.file + ".json", pairs.map(function (p) {
-        const o = {}; o[cfg.header[0]] = p[0]; o.count = p[1]; return o;
+        const o = {}; o[cfg.header[0]] = p[0]; o[cfg.header[1]] = p[1]; return o;
       }));
     } else {
       downloadCSV(cfg.file + ".csv", [cfg.header].concat(pairs));
@@ -720,6 +752,20 @@ DASHBOARD_JS = r"""
     if (!window.WIMBD_DATA) return;
     const docs = window.WIMBD_DATA.docs.filter(function (d) { return d.status === status; });
     showArticles(status, status + " — " + docs.length +
+      " document" + (docs.length === 1 ? "" : "s"), docs);
+  }
+
+  function openLanguageDrill(lang) {
+    if (!window.WIMBD_DATA) return;
+    const docs = window.WIMBD_DATA.docs.filter(function (d) { return d.lang === lang; });
+    showArticles(lang, "language: " + lang + " — " + docs.length +
+      " document" + (docs.length === 1 ? "" : "s"), docs);
+  }
+
+  function openContentTypeDrill(ct) {
+    if (!window.WIMBD_DATA) return;
+    const docs = window.WIMBD_DATA.docs.filter(function (d) { return d.content_type === ct; });
+    showArticles(ct, "content type: " + ct + " — " + docs.length +
       " document" + (docs.length === 1 ? "" : "s"), docs);
   }
 
@@ -893,7 +939,10 @@ DASHBOARD_JS = r"""
     wireChartClick("chart_suffixes", openSuffixDrill);
     wireChartClick("chart_status", openStatusDrill, function (pt) { return pt.label; });
     wireChartClick("chart_pii", openPiiDrill, function (pt) { return pt.x; });
+    wireChartClick("chart_pii_docs", openPiiDrill, function (pt) { return pt.x; });
     wireChartClick("chart_offensive", openOffensiveDrill, function (pt) { return unreverseLabel(pt.y); });
+    wireChartClick("chart_languages", openLanguageDrill, function (pt) { return pt.label; });
+    wireChartClick("chart_content_types", openContentTypeDrill, function (pt) { return pt.label; });
   });
 })();
 """
@@ -1054,6 +1103,11 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
         for (title, _), block in zip(figures, fig_html_blocks)
     )
 
+    def _stat_pairs(s: dict) -> list[list]:
+        keys = ["n", "mean", "std", "min", "p25", "p50", "p75", "p95", "p99", "max", "sum"]
+        return [[k, s[k]] for k in keys if k in s]
+
+    ls = res["length_stats"]
     doc_index = res.get("_doc_summaries", [])
     data_obj = {
         "docs": doc_index,
@@ -1064,6 +1118,20 @@ def build_dashboard(res: dict, out_path: Path, input_path: Path) -> None:
             "offensive": res.get("_export_offensive", []),
             "pii_counts": list(res["pii"]["counts"].items()),
             "pii_values": res.get("_export_pii_values", {}),
+            "pii_docs": list(res["pii"]["docs_containing"].items()),
+            "languages": list(res["languages"].items()),
+            "content_types": list(res["content_types"].items()),
+            "statuses": list(res["statuses"].items()),
+            "by_year": list(res["by_year"].items()),
+            "by_month": list(res["by_month"].items()),
+            "word_lengths": [[str(k), v] for k, v in res["vocab"]["word_length_distribution"].items()],
+            "stats_tokens": _stat_pairs(ls["tokens_per_doc"]),
+            "stats_chars": _stat_pairs(ls["chars_per_doc"]),
+            "stats_bytes": _stat_pairs(ls["bytes_per_doc"]),
+            "stats_alpha": _stat_pairs(ls["alpha_ratio"]),
+            "stats_symbol": _stat_pairs(ls["symbol_per_word"]),
+            "stats_meanwl": _stat_pairs(ls["mean_word_len"]),
+            "stats_langconf": _stat_pairs(res["lang_score_stats"]),
         },
     }
     data_json = json.dumps(data_obj, ensure_ascii=False).replace("</", "<\\/")
