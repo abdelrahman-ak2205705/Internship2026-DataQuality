@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import csv
 import json
 import time
 from pathlib import Path
@@ -18,7 +19,7 @@ OUTPUT_JSON = Path("domain_results.json")
 OUTPUT_TXT  = Path("domain_summary.txt")
 
 MODEL_NAME  = "nvidia/multilingual-domain-classifier"
-N_DOCS      = 20       # number of documents to classify
+N_DOCS      = 1000      # number of documents to classify
 BATCH_SIZE  = 16
 MAX_CHARS   = 2000     # truncate text to first 2000 chars (model recommendation)
 DEVICE      = "cuda" if torch.cuda.is_available() else "cpu"
@@ -143,6 +144,20 @@ def print_and_save_summary(results: list[dict], out_path: Path) -> None:
     print(f"\n[domain] saved summary → {out_path}")
 
 
+def save_csv(results: list[dict], out_path: Path) -> None:
+    with out_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["url", "domain", "confidence",
+                        ])
+        for r in results:
+            top3 = r.get("top3", [])
+            writer.writerow([
+                r["url"] or "",
+                r["domain"],
+                r["confidence"],
+            ])
+    print(f"[domain] saved CSV → {out_path}")
+
 # ---------------------------------------------------------------------- main
 def main() -> None:
     print(f"[domain] reading {N_DOCS} documents from: {INPUT_PATH}")
@@ -157,6 +172,7 @@ def main() -> None:
     print(f"[domain] saved predictions → {OUTPUT_JSON}")
 
     print_and_save_summary(results, OUTPUT_TXT)
+    save_csv(results, OUTPUT_CSV)
 
 
 if __name__ == "__main__":
