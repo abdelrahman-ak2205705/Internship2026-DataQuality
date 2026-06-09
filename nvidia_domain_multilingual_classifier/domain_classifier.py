@@ -1,4 +1,20 @@
+"""
+Domain classification of Arabic CC sample using:
+    nvidia/multilingual-domain-classifier
 
+Supports 52 languages including Arabic, outputs one of 26 domain classes.
+
+Usage:
+    python domain_classifier.py
+
+Output:
+    - domain_results.json  : per-document domain predictions
+    - domain_summary.txt   : domain distribution summary
+    - domain_results.csv   : url, domain, confidence per document
+
+Install dependencies:
+    pip install torch transformers huggingface_hub
+"""
 
 from __future__ import annotations
 
@@ -14,14 +30,15 @@ from transformers import AutoModel, AutoTokenizer, AutoConfig
 from huggingface_hub import PyTorchModelHubMixin
 
 # -------------------------------------------------------------------- config
-INPUT_PATH  = Path("state_output_sample1000.jsonl")
+INPUT_PATH  = Path("state_output.jsonl")
 OUTPUT_JSON = Path("domain_results.json")
 OUTPUT_TXT  = Path("domain_summary.txt")
+OUTPUT_CSV  = Path("domain_results.csv")
 
 MODEL_NAME  = "nvidia/multilingual-domain-classifier"
-N_DOCS      = 1000      # number of documents to classify
+N_DOCS      = 3000
 BATCH_SIZE  = 16
-MAX_CHARS   = 2000     # truncate text to first 2000 chars (model recommendation)
+MAX_CHARS   = 2000
 DEVICE      = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -110,6 +127,13 @@ def classify_domains(records: list[dict]) -> list[dict]:
                 ],
             })
 
+        if (batch_start // BATCH_SIZE + 1) % 100 == 0:
+            done = batch_start + len(batch)
+            elapsed = time.time() - t0
+            rate = done / elapsed
+            remaining = (len(records) - done) / rate
+            print(f"  {done}/{len(records)} docs  |  {rate:.1f} docs/s  |  ~{remaining:.0f}s remaining")
+
     print(f"[domain] done in {time.time() - t0:.1f}s")
     return results
 
@@ -129,7 +153,7 @@ def print_and_save_summary(results: list[dict], out_path: Path) -> None:
     for domain, count in counter.most_common():
         pct = count / total * 100
         bar = "█" * int(pct / 2)
-        lines.append(f"  {domain:<30} {count:>3}  ({pct:5.1f}%)  {bar}")
+        lines.append(f"  {domain:<30} {count:>5}  ({pct:5.1f}%)  {bar}")
     lines.append("=" * 60)
     lines.append("\nPer-document predictions:")
     lines.append(f"  {'URL':<55} {'Domain':<30} Conf")
@@ -141,22 +165,21 @@ def print_and_save_summary(results: list[dict], out_path: Path) -> None:
     summary = "\n".join(lines)
     print("\n" + summary)
     out_path.write_text(summary, encoding="utf-8")
-    print(f"\n[domain] saved summary → {out_path}")
+    print(f"[domain] saved summary → {out_path}")
 
 
 def save_csv(results: list[dict], out_path: Path) -> None:
     with out_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["url", "domain", "confidence",
-                        ])
+        writer.writerow(["url", "domain"])
         for r in results:
             top3 = r.get("top3", [])
             writer.writerow([
                 r["url"] or "",
-                r["domain"],
-                r["confidence"],
+                r["domain"]
             ])
     print(f"[domain] saved CSV → {out_path}")
+
 
 # ---------------------------------------------------------------------- main
 def main() -> None:

@@ -52,7 +52,7 @@ from datasketch import MinHash, MinHashLSH
 from plotly.subplots import make_subplots
 
 # -------------------------------------------------------------------- config
-INPUT_PATH = Path("state_output_sample1000.jsonl")
+INPUT_PATH = Path("state_output.jsonl")
 OUT_DIR    = Path(".")
 
 TOP_K = 30
