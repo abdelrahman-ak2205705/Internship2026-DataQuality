@@ -90,6 +90,7 @@ def normalize_ar(text: str) -> str:
     text = _TA_MARBUTA.sub("ه", text)
     return text
 
+ARABIC_STOPWORDS = {normalize_ar(w) for w in ARABIC_STOPWORDS}
 
 def tokenize(text: str) -> list[str]:
     return _WORD_RE.findall(text)
